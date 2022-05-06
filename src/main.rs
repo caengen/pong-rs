@@ -48,24 +48,49 @@ impl Ball {
         true
     }
 
-    fn move_self(&mut self, bounds: (f32, f32, f32, f32), scale: f32) {
+    fn move_self(&mut self, bounds: (f32, f32, f32, f32), player: &Player, scale: f32) {
         let (x, y, w, h) = bounds;
-        let mut newPos = (self.pos.0 + self.vel.0, self.pos.1 + self.vel.1);
-        if newPos.1 < y {
-            newPos.1 = y;
+        let mut new_pos = (self.pos.0 + self.vel.0, self.pos.1 + self.vel.1);
+        if new_pos.1 < y {
+            new_pos.1 = y;
             self.vel.1 *= -1.0;
-        } else if newPos.1 + self.size * scale > h {
-            newPos.1 = h - self.size * scale;
+        } else if new_pos.1 + self.size * scale > h {
+            new_pos.1 = h - self.size * scale;
             self.vel.1 *= -1.0;
         }
 
-        self.pos = newPos;
+        if intersects(
+            (new_pos.0, new_pos.1, self.size * scale, self.size * scale),
+            (
+                player.pos.0,
+                player.pos.1,
+                player.width * scale,
+                player.length * scale,
+            ),
+        ) {
+            new_pos.0 = player.pos.0 + player.width * scale;
+            self.vel.0 *= -1.;
+        }
+
+        self.pos = new_pos;
     }
 }
 enum RunState {
     Start,
     Running,
     GameOver,
+}
+
+fn intersects(r1: (f32, f32, f32, f32), r2: (f32, f32, f32, f32)) -> bool {
+    let leftX = f32::max(r1.0, r2.0);
+    let rightX = f32::min(r1.0 + r1.2, r2.0 + r2.2);
+    let topY = f32::max(r1.1, r2.1);
+    let bottomY = f32::min(r1.1 + r1.3, r2.1 + r2.3);
+    if leftX < rightX && topY < bottomY {
+        return true;
+    }
+
+    false
 }
 
 #[macroquad::main("Pong")]
@@ -86,9 +111,6 @@ async fn main() {
 
     let mut last_update = get_time();
     let mut run_state = RunState::Start;
-
-    let up = (0, -1);
-    let down = (0, 1);
 
     request_new_screen_size(600.0, 300.0);
 
@@ -135,7 +157,7 @@ async fn main() {
                 }
 
                 if ball.is_inside((offset_x, offset_y, width, height), height_unit) {
-                    ball.move_self((offset_x, offset_y, width, height), height_unit);
+                    ball.move_self((offset_x, offset_y, width, height), &player, height_unit);
                 } else {
                     ball = Ball::new(ball_start);
                 }

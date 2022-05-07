@@ -1,6 +1,6 @@
 use macroquad::prelude::*;
 
-type Point = (i16, i16);
+type Point = (f32, f32);
 
 const UNITS: i16 = 32;
 
@@ -11,6 +11,15 @@ struct Player {
     pos: (f32, f32),
 }
 
+impl Player {
+    fn center_pos(&self, scale: f32) -> Point {
+        let p: Point = (
+            (self.pos.0 + self.width * scale) / 2.,
+            (self.pos.1 + self.length * scale) / 2.,
+        );
+        p
+    }
+}
 struct Ball {
     vel: (f32, f32),
     pos: (f32, f32),
@@ -37,6 +46,14 @@ impl Ball {
         }
     }
 
+    fn center_pos(&self, scale: f32) -> Point {
+        let p: Point = (
+            (self.pos.0 + self.size * scale) / 2.,
+            (self.pos.1 + self.size * scale) / 2.,
+        );
+        p
+    }
+
     fn is_inside(&self, bounds: (f32, f32, f32, f32), scale: f32) -> bool {
         let (x, y, w, h) = bounds;
         if self.pos.0 + self.size * scale < x {
@@ -48,7 +65,13 @@ impl Ball {
         true
     }
 
-    fn move_self(&mut self, bounds: (f32, f32, f32, f32), player: &Player, scale: f32) {
+    fn move_self(
+        &mut self,
+        bounds: (f32, f32, f32, f32),
+        player: &Player,
+        computer: &Player,
+        scale: f32,
+    ) {
         let (x, y, w, h) = bounds;
         let mut new_pos = (self.pos.0 + self.vel.0, self.pos.1 + self.vel.1);
         if new_pos.1 < y {
@@ -59,8 +82,9 @@ impl Ball {
             self.vel.1 *= -1.0;
         }
 
+        let rect1 = (new_pos.0, new_pos.1, self.size * scale, self.size * scale);
         if intersects(
-            (new_pos.0, new_pos.1, self.size * scale, self.size * scale),
+            rect1,
             (
                 player.pos.0,
                 player.pos.1,
@@ -69,6 +93,17 @@ impl Ball {
             ),
         ) {
             new_pos.0 = player.pos.0 + player.width * scale;
+            self.vel.0 *= -1.;
+        } else if intersects(
+            rect1,
+            (
+                computer.pos.0,
+                computer.pos.1,
+                computer.width * scale,
+                computer.length * scale,
+            ),
+        ) {
+            new_pos.0 = computer.pos.0 - self.size * scale;
             self.vel.0 *= -1.;
         }
 
@@ -103,6 +138,13 @@ async fn main() {
         pos: (10.0, screen_height() / 2. - 6.0),
     };
 
+    let mut computer = Player {
+        length: 6.0,
+        width: 1.0,
+        vel: 20.,
+        pos: (screen_width() - 11., screen_height() / 2. - 6.0),
+    };
+
     let ball_start = (screen_width() / 2., screen_height() / 2.);
     let mut ball = Ball::new(ball_start);
 
@@ -121,6 +163,7 @@ async fn main() {
         let offset_x = 0.;
         let offset_y = 0.;
         let height_unit = (height - offset_y * 2.) / UNITS as f32;
+        computer.pos.0 = width - computer.width * height_unit - 10.;
 
         match run_state {
             RunState::Start => {
@@ -157,9 +200,49 @@ async fn main() {
                 }
 
                 if ball.is_inside((offset_x, offset_y, width, height), height_unit) {
-                    ball.move_self((offset_x, offset_y, width, height), &player, height_unit);
+                    ball.move_self(
+                        (offset_x, offset_y, width, height),
+                        &player,
+                        &computer,
+                        height_unit,
+                    );
                 } else {
                     ball = Ball::new(ball_start);
+                }
+
+                // move computer
+
+                let disp = get_frame_time() * computer.vel * height_unit;
+                if ball.vel.0 < 0.0 {
+                    if computer.center_pos(height_unit).1 < height / 2.0 {
+                        computer.pos.1 = clamp(
+                            computer.pos.1 + disp,
+                            offset_y,
+                            height / 2.0 - (computer.length * height_unit / 2.0),
+                        );
+                    } else if computer.center_pos(height_unit).1 > height / 2.0 {
+                        computer.pos.1 = clamp(
+                            computer.pos.1 - disp,
+                            height / 2.0 - (computer.length * height_unit / 2.0),
+                            height - (computer.length * height_unit / 2.0),
+                        );
+                    }
+                } else {
+                    let ballCY = ball.center_pos(height_unit).1;
+                    let compCY = computer.center_pos(height_unit).1;
+                    if compCY - ballCY > 0. && compCY - ballCY > 10.0 {
+                        computer.pos.1 = clamp(
+                            computer.pos.1 - disp,
+                            offset_y,
+                            height - computer.length * height_unit,
+                        );
+                    } else if ballCY - compCY > 0. && ballCY - compCY > 10.0 {
+                        computer.pos.1 = clamp(
+                            computer.pos.1 + disp,
+                            offset_y,
+                            height - computer.length * height_unit,
+                        );
+                    }
                 }
 
                 // draw scores
@@ -177,6 +260,13 @@ async fn main() {
                     offset_y + player.pos.1,
                     player.width * height_unit,
                     player.length * height_unit,
+                    BLACK,
+                );
+                draw_rectangle(
+                    offset_x + computer.pos.0,
+                    offset_y + computer.pos.1,
+                    computer.width * height_unit,
+                    computer.length * height_unit,
                     BLACK,
                 );
 

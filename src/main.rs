@@ -54,15 +54,15 @@ impl Ball {
         p
     }
 
-    fn is_inside(&self, bounds: (f32, f32, f32, f32), scale: f32) -> bool {
+    fn is_out_of_bounds(&self, bounds: (f32, f32, f32, f32), scale: f32) -> i8 {
         let (x, y, w, h) = bounds;
         if self.pos.0 + self.size * scale < x {
-            return false;
+            return -1;
         } else if self.pos.0 + self.size * scale > x + w {
-            return false;
+            return 1;
         }
 
-        true
+        0
     }
 
     fn move_self(
@@ -93,7 +93,7 @@ impl Ball {
             ),
         ) {
             new_pos.0 = player.pos.0 + player.width * scale;
-            self.vel.0 *= -1.;
+            self.vel.0 *= -1.05;
         } else if intersects(
             rect1,
             (
@@ -104,7 +104,7 @@ impl Ball {
             ),
         ) {
             new_pos.0 = computer.pos.0 - self.size * scale;
-            self.vel.0 *= -1.;
+            self.vel.0 *= -1.05;
         }
 
         self.pos = new_pos;
@@ -127,6 +127,9 @@ fn intersects(r1: (f32, f32, f32, f32), r2: (f32, f32, f32, f32)) -> bool {
 
     false
 }
+const START_HEIGHT: f32 = 300.0;
+const START_WIDTH: f32 = 600.0;
+const BG_FIELD_THICKNESS: f32 = 10.0;
 
 #[macroquad::main("Pong")]
 async fn main() {
@@ -135,17 +138,17 @@ async fn main() {
         length: 6.0,
         width: 1.0,
         vel: 10.,
-        pos: (10.0, screen_height() / 2. - 6.0),
+        pos: (10.0, START_HEIGHT / 2. - 6.0),
     };
 
     let mut computer = Player {
         length: 6.0,
         width: 1.0,
-        vel: 20.,
-        pos: (screen_width() - 11., screen_height() / 2. - 6.0),
+        vel: 10.,
+        pos: (START_WIDTH - 11., START_HEIGHT / 2. - 6.0),
     };
 
-    let ball_start = (screen_width() / 2., screen_height() / 2.);
+    let ball_start = (START_WIDTH / 2., START_HEIGHT / 2.);
     let mut ball = Ball::new(ball_start);
 
     let mut player_score = 0;
@@ -154,12 +157,13 @@ async fn main() {
     let mut last_update = get_time();
     let mut run_state = RunState::Start;
 
-    request_new_screen_size(600.0, 300.0);
+    request_new_screen_size(START_WIDTH, START_HEIGHT);
 
     loop {
         clear_background(WHITE);
-        let width = f32::max(screen_width(), 600.0);
-        let height = f32::max(screen_height(), 300.0);
+
+        let width = screen_width();
+        let height = screen_height();
         let offset_x = 0.;
         let offset_y = 0.;
         let height_unit = (height - offset_y * 2.) / UNITS as f32;
@@ -184,6 +188,11 @@ async fn main() {
                 //handle inputs
                 last_update = get_time();
 
+                if comp_score == 10 || player_score == 10 {
+                    run_state = RunState::GameOver;
+                    continue;
+                }
+
                 if is_key_down(KeyCode::Up) {
                     player.pos.1 = clamp(
                         player.pos.1 - player.vel,
@@ -199,7 +208,9 @@ async fn main() {
                     );
                 }
 
-                if ball.is_inside((offset_x, offset_y, width, height), height_unit) {
+                let ball_placement =
+                    ball.is_out_of_bounds((offset_x, offset_y, width, height), height_unit);
+                if ball_placement == 0 {
                     ball.move_self(
                         (offset_x, offset_y, width, height),
                         &player,
@@ -207,6 +218,11 @@ async fn main() {
                         height_unit,
                     );
                 } else {
+                    if ball_placement < 0 {
+                        comp_score += 1;
+                    } else {
+                        player_score += 1;
+                    }
                     ball = Ball::new(ball_start);
                 }
 
@@ -228,7 +244,7 @@ async fn main() {
                         );
                     }
                 } else {
-                    let ballCY = ball.center_pos(height_unit).1;
+                    let ballCY = ball.center_pos(height_unit).1 + ball.vel.1 * height_unit;
                     let compCY = computer.center_pos(height_unit).1;
                     if compCY - ballCY > 0. && compCY - ballCY > 10.0 {
                         computer.pos.1 = clamp(
@@ -245,12 +261,57 @@ async fn main() {
                     }
                 }
 
+                //draw background
+                //top line
+                draw_line(
+                    offset_x,
+                    offset_y,
+                    width,
+                    offset_y,
+                    BG_FIELD_THICKNESS,
+                    BLACK,
+                );
+                //bottom line
+                draw_line(offset_x, height, width, height, BG_FIELD_THICKNESS, BLACK);
+
+                //center separator
+                draw_line(
+                    width / 2.0 - BG_FIELD_THICKNESS / 2.0,
+                    offset_y,
+                    width / 2.0 - BG_FIELD_THICKNESS / 2.0,
+                    height,
+                    BG_FIELD_THICKNESS,
+                    BLACK,
+                );
+                for i in 1..=10 {
+                    draw_line(
+                        offset_x,
+                        offset_y + (height / 10.0 * i as f32),
+                        width,
+                        offset_y + (height / 10.0 * i as f32),
+                        BG_FIELD_THICKNESS,
+                        WHITE,
+                    );
+                }
+
                 // draw scores
+                let score_size = 40.0;
+                let player_score_text = format!("{}", player_score).to_string();
+                let player_text_size = measure_text(&player_score_text, None, score_size as _, 1.0);
+
                 draw_text(
-                    format!("{}", player_score).as_str(),
-                    offset_x + 10.,
-                    offset_y + 20.,
-                    40.,
+                    &player_score_text,
+                    width / 2.0 - 27. - player_text_size.width,
+                    offset_y + 40.,
+                    score_size,
+                    BLACK,
+                );
+
+                draw_text(
+                    format!("{}", comp_score).as_str(),
+                    width / 2.0 + 20.,
+                    offset_y + 40.,
+                    score_size,
                     BLACK,
                 );
 
@@ -280,7 +341,11 @@ async fn main() {
             }
             RunState::GameOver => {
                 clear_background(WHITE);
-                let text = "You are a loser. Press [enter] to try again.";
+                let text = if comp_score == 10 {
+                    "You are a loser. Press [enter] to try again."
+                } else {
+                    "You win. Congratulations."
+                };
                 let text_size = measure_text(text, None, font_size as _, 1.0);
 
                 draw_text(

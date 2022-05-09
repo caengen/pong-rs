@@ -4,6 +4,14 @@ type Point = (f32, f32);
 
 const UNITS: i16 = 32;
 
+const FONT_SIZE: f32 = 30.;
+const START_HEIGHT: f32 = 300.0;
+const START_WIDTH: f32 = 600.0;
+
+const BG_FIELD_THICKNESS: f32 = 10.0;
+
+const GAME_END_SCORE: i8 = 10;
+
 struct Player {
     length: f32,
     width: f32,
@@ -14,8 +22,8 @@ struct Player {
 impl Player {
     fn center_pos(&self, scale: f32) -> Point {
         let p: Point = (
-            (self.pos.0 + self.width * scale) / 2.,
-            (self.pos.1 + self.length * scale) / 2.,
+            self.pos.0 + (self.width * scale / 2.),
+            self.pos.1 + (self.length * scale / 2.),
         );
         p
     }
@@ -48,8 +56,8 @@ impl Ball {
 
     fn center_pos(&self, scale: f32) -> Point {
         let p: Point = (
-            (self.pos.0 + self.size * scale) / 2.,
-            (self.pos.1 + self.size * scale) / 2.,
+            self.pos.0 + (self.size * scale / 2.),
+            self.pos.1 + (self.size * scale / 2.),
         );
         p
     }
@@ -127,242 +135,284 @@ fn intersects(r1: (f32, f32, f32, f32), r2: (f32, f32, f32, f32)) -> bool {
 
     false
 }
-const START_HEIGHT: f32 = 300.0;
-const START_WIDTH: f32 = 600.0;
-const BG_FIELD_THICKNESS: f32 = 10.0;
+
+struct GameState {
+    player: Player,
+    computer: Player,
+    ball: Ball,
+    player_score: i8,
+    comp_score: i8,
+    last_update: f64,
+    run_state: RunState,
+    width: f32,
+    height: f32,
+    offset_x: f32,
+    offset_y: f32,
+    scale: f32,
+}
+
+fn handle_input(gs: &mut GameState) {
+    match gs.run_state {
+        RunState::Start => {
+            //start game
+            if is_key_down(KeyCode::Enter) {
+                gs.run_state = RunState::Running;
+            }
+        }
+        RunState::Running => {
+            //movement
+            if is_key_down(KeyCode::Up) {
+                gs.player.pos.1 = clamp(
+                    gs.player.pos.1 - gs.player.vel,
+                    gs.offset_y,
+                    gs.height - gs.player.length * gs.scale,
+                );
+            }
+            if is_key_down(KeyCode::Down) {
+                gs.player.pos.1 = clamp(
+                    gs.player.pos.1 + gs.player.vel,
+                    gs.offset_y,
+                    gs.height - gs.player.length * gs.scale,
+                );
+            }
+        }
+        RunState::GameOver => {
+            //restart game
+            if is_key_down(KeyCode::Enter) {
+                gs.player_score = 0;
+                gs.comp_score = 0;
+                gs.run_state = RunState::Running;
+                gs.last_update = get_time();
+            }
+        }
+    }
+}
+
+fn update(gs: &mut GameState) {
+    let ball_start = (screen_width() / 2., screen_height() / 2.);
+    match gs.run_state {
+        RunState::Running => {
+            gs.last_update = get_time();
+            gs.computer.pos.0 = gs.width - gs.computer.width * gs.scale - 10.;
+
+            if gs.comp_score == GAME_END_SCORE || gs.player_score == GAME_END_SCORE {
+                gs.run_state = RunState::GameOver;
+                return;
+            }
+
+            let ball_placement = gs
+                .ball
+                .is_out_of_bounds((gs.offset_x, gs.offset_y, gs.width, gs.height), gs.scale);
+            if ball_placement == 0 {
+                gs.ball.move_self(
+                    (gs.offset_x, gs.offset_y, gs.width, gs.height),
+                    &gs.player,
+                    &gs.computer,
+                    gs.scale,
+                );
+            } else {
+                if ball_placement < 0 {
+                    gs.comp_score += 1;
+                } else {
+                    gs.player_score += 1;
+                }
+                gs.ball = Ball::new(ball_start);
+            }
+
+            // move computer
+            let disp = get_frame_time() * gs.computer.vel * gs.scale;
+            // if ball is moving left the computer resets to center position
+            let comp_center_y = gs.computer.center_pos(gs.scale).1;
+            if gs.ball.vel.0 < 0.0 {
+                if comp_center_y < (gs.height / 2.0) {
+                    gs.computer.pos.1 = clamp(
+                        gs.computer.pos.1 + disp,
+                        gs.offset_y,
+                        gs.height / 2.0 - (gs.computer.length * gs.scale / 2.0),
+                    );
+                } else if comp_center_y > gs.height / 2.0 {
+                    gs.computer.pos.1 = clamp(
+                        gs.computer.pos.1 - disp,
+                        gs.offset_y,
+                        gs.height - (gs.computer.length * gs.scale / 2.0),
+                    );
+                }
+            // if ball is moving towards computer attempt to intercept
+            } else {
+                let ball_cy = gs.ball.center_pos(gs.scale).1;
+                if comp_center_y > ball_cy {
+                    gs.computer.pos.1 = clamp(gs.computer.pos.1 - disp, gs.offset_y, gs.height);
+                } else if ball_cy > comp_center_y {
+                    gs.computer.pos.1 = clamp(
+                        gs.computer.pos.1 + disp,
+                        gs.offset_y,
+                        gs.height - (gs.computer.length * gs.scale / 2.0),
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn draw(gs: &GameState) {
+    clear_background(WHITE);
+
+    match gs.run_state {
+        RunState::Start => {
+            let text = "Press [enter] to start Pong.";
+            let text_size = measure_text(text, None, FONT_SIZE as _, 1.0);
+            draw_text(
+                text,
+                gs.width / 2. - text_size.width / 2.,
+                gs.height / 2. - text_size.height / 2.,
+                FONT_SIZE,
+                BLACK,
+            );
+        }
+        RunState::Running => {
+            //draw background
+            //top line
+            draw_line(
+                gs.offset_x,
+                gs.offset_y,
+                gs.width,
+                gs.offset_y,
+                BG_FIELD_THICKNESS,
+                BLACK,
+            );
+            //bottom line
+            draw_line(
+                gs.offset_x,
+                gs.height,
+                gs.width,
+                gs.height,
+                BG_FIELD_THICKNESS,
+                BLACK,
+            );
+
+            //center separator
+            draw_line(
+                gs.width / 2.0 - BG_FIELD_THICKNESS / 2.0,
+                gs.offset_y,
+                gs.width / 2.0 - BG_FIELD_THICKNESS / 2.0,
+                gs.height,
+                BG_FIELD_THICKNESS,
+                BLACK,
+            );
+            for i in 1..=10 {
+                draw_line(
+                    gs.offset_x,
+                    gs.offset_y + (gs.height / 10.0 * i as f32),
+                    gs.width,
+                    gs.offset_y + (gs.height / 10.0 * i as f32),
+                    BG_FIELD_THICKNESS,
+                    WHITE,
+                );
+            }
+
+            // draw scores
+            let score_size = 40.0;
+            let player_score_text = format!("{}", gs.player_score).to_string();
+            let player_text_size = measure_text(&player_score_text, None, score_size as _, 1.0);
+
+            draw_text(
+                &player_score_text,
+                gs.width / 2.0 - 27. - player_text_size.width,
+                gs.offset_y + 40.,
+                score_size,
+                BLACK,
+            );
+
+            draw_text(
+                format!("{}", gs.comp_score).as_str(),
+                gs.width / 2.0 + 20.,
+                gs.offset_y + 40.,
+                score_size,
+                BLACK,
+            );
+
+            // draw players
+            draw_rectangle(
+                gs.offset_x + gs.player.pos.0,
+                gs.offset_y + gs.player.pos.1,
+                gs.player.width * gs.scale,
+                gs.player.length * gs.scale,
+                BLACK,
+            );
+            draw_rectangle(
+                gs.offset_x + gs.computer.pos.0,
+                gs.offset_y + gs.computer.pos.1,
+                gs.computer.width * gs.scale,
+                gs.computer.length * gs.scale,
+                BLACK,
+            );
+
+            draw_rectangle(
+                gs.ball.pos.0,
+                gs.ball.pos.1,
+                gs.ball.size as f32 * gs.scale,
+                gs.ball.size as f32 * gs.scale,
+                BLACK,
+            );
+        }
+        RunState::GameOver => {
+            clear_background(WHITE);
+            let text = if gs.comp_score == GAME_END_SCORE {
+                "You are a loser. Press [enter] to try again."
+            } else {
+                "You win. Congratulations."
+            };
+            let text_size = measure_text(text, None, FONT_SIZE as _, 1.0);
+
+            draw_text(
+                text,
+                gs.width / 2. - text_size.width / 2.,
+                gs.height / 2. - text_size.height / 2.,
+                FONT_SIZE,
+                BLACK,
+            );
+        }
+    }
+}
 
 #[macroquad::main("Pong")]
 async fn main() {
-    let font_size = 30.;
-    let mut player = Player {
-        length: 6.0,
-        width: 1.0,
-        vel: 10.,
-        pos: (10.0, START_HEIGHT / 2. - 6.0),
+    let mut gs = GameState {
+        player: Player {
+            length: 6.0,
+            width: 1.0,
+            vel: 10.,
+            pos: (10.0, START_HEIGHT / 2. - 6.0),
+        },
+        computer: Player {
+            length: 6.0,
+            width: 1.0,
+            vel: 10.,
+            pos: (START_WIDTH - 11., START_HEIGHT / 2. - 6.0),
+        },
+        ball: Ball::new((START_WIDTH / 2.0, START_HEIGHT / 2.0)),
+        player_score: 0,
+        comp_score: 0,
+        last_update: get_time(),
+        run_state: RunState::Start,
+        width: screen_width(),
+        height: screen_height(),
+        offset_x: 0.0,
+        offset_y: 0.0,
+        scale: screen_height() / UNITS as f32,
     };
-
-    let mut computer = Player {
-        length: 6.0,
-        width: 1.0,
-        vel: 10.,
-        pos: (START_WIDTH - 11., START_HEIGHT / 2. - 6.0),
-    };
-
-    let ball_start = (START_WIDTH / 2., START_HEIGHT / 2.);
-    let mut ball = Ball::new(ball_start);
-
-    let mut player_score = 0;
-    let mut comp_score = 0;
-
-    let mut last_update = get_time();
-    let mut run_state = RunState::Start;
 
     request_new_screen_size(START_WIDTH, START_HEIGHT);
 
     loop {
-        clear_background(WHITE);
+        gs.width = screen_width();
+        gs.height = screen_height();
+        gs.scale = (screen_height() - gs.offset_y * 2.) / UNITS as f32;
 
-        let width = screen_width();
-        let height = screen_height();
-        let offset_x = 0.;
-        let offset_y = 0.;
-        let height_unit = (height - offset_y * 2.) / UNITS as f32;
-        computer.pos.0 = width - computer.width * height_unit - 10.;
-
-        match run_state {
-            RunState::Start => {
-                let text = "Press [enter] to start Pong.";
-                let text_size = measure_text(text, None, font_size as _, 1.0);
-                draw_text(
-                    text,
-                    width / 2. - text_size.width / 2.,
-                    height / 2. - text_size.height / 2.,
-                    font_size,
-                    BLACK,
-                );
-                if is_key_down(KeyCode::Enter) {
-                    run_state = RunState::Running;
-                }
-            }
-            RunState::Running => {
-                //handle inputs
-                last_update = get_time();
-
-                if comp_score == 10 || player_score == 10 {
-                    run_state = RunState::GameOver;
-                    continue;
-                }
-
-                if is_key_down(KeyCode::Up) {
-                    player.pos.1 = clamp(
-                        player.pos.1 - player.vel,
-                        offset_y,
-                        height - player.length * height_unit,
-                    );
-                }
-                if is_key_down(KeyCode::Down) {
-                    player.pos.1 = clamp(
-                        player.pos.1 + player.vel,
-                        offset_y,
-                        height - player.length * height_unit,
-                    );
-                }
-
-                let ball_placement =
-                    ball.is_out_of_bounds((offset_x, offset_y, width, height), height_unit);
-                if ball_placement == 0 {
-                    ball.move_self(
-                        (offset_x, offset_y, width, height),
-                        &player,
-                        &computer,
-                        height_unit,
-                    );
-                } else {
-                    if ball_placement < 0 {
-                        comp_score += 1;
-                    } else {
-                        player_score += 1;
-                    }
-                    ball = Ball::new(ball_start);
-                }
-
-                // move computer
-
-                let disp = get_frame_time() * computer.vel * height_unit;
-                if ball.vel.0 < 0.0 {
-                    if computer.center_pos(height_unit).1 < height / 2.0 {
-                        computer.pos.1 = clamp(
-                            computer.pos.1 + disp,
-                            offset_y,
-                            height / 2.0 - (computer.length * height_unit / 2.0),
-                        );
-                    } else if computer.center_pos(height_unit).1 > height / 2.0 {
-                        computer.pos.1 = clamp(
-                            computer.pos.1 - disp,
-                            height / 2.0 - (computer.length * height_unit / 2.0),
-                            height - (computer.length * height_unit / 2.0),
-                        );
-                    }
-                } else {
-                    let ballCY = ball.center_pos(height_unit).1 + ball.vel.1 * height_unit;
-                    let compCY = computer.center_pos(height_unit).1;
-                    if compCY - ballCY > 0. && compCY - ballCY > 10.0 {
-                        computer.pos.1 = clamp(
-                            computer.pos.1 - disp,
-                            offset_y,
-                            height - computer.length * height_unit,
-                        );
-                    } else if ballCY - compCY > 0. && ballCY - compCY > 10.0 {
-                        computer.pos.1 = clamp(
-                            computer.pos.1 + disp,
-                            offset_y,
-                            height - computer.length * height_unit,
-                        );
-                    }
-                }
-
-                //draw background
-                //top line
-                draw_line(
-                    offset_x,
-                    offset_y,
-                    width,
-                    offset_y,
-                    BG_FIELD_THICKNESS,
-                    BLACK,
-                );
-                //bottom line
-                draw_line(offset_x, height, width, height, BG_FIELD_THICKNESS, BLACK);
-
-                //center separator
-                draw_line(
-                    width / 2.0 - BG_FIELD_THICKNESS / 2.0,
-                    offset_y,
-                    width / 2.0 - BG_FIELD_THICKNESS / 2.0,
-                    height,
-                    BG_FIELD_THICKNESS,
-                    BLACK,
-                );
-                for i in 1..=10 {
-                    draw_line(
-                        offset_x,
-                        offset_y + (height / 10.0 * i as f32),
-                        width,
-                        offset_y + (height / 10.0 * i as f32),
-                        BG_FIELD_THICKNESS,
-                        WHITE,
-                    );
-                }
-
-                // draw scores
-                let score_size = 40.0;
-                let player_score_text = format!("{}", player_score).to_string();
-                let player_text_size = measure_text(&player_score_text, None, score_size as _, 1.0);
-
-                draw_text(
-                    &player_score_text,
-                    width / 2.0 - 27. - player_text_size.width,
-                    offset_y + 40.,
-                    score_size,
-                    BLACK,
-                );
-
-                draw_text(
-                    format!("{}", comp_score).as_str(),
-                    width / 2.0 + 20.,
-                    offset_y + 40.,
-                    score_size,
-                    BLACK,
-                );
-
-                // draw players
-                draw_rectangle(
-                    offset_x + player.pos.0,
-                    offset_y + player.pos.1,
-                    player.width * height_unit,
-                    player.length * height_unit,
-                    BLACK,
-                );
-                draw_rectangle(
-                    offset_x + computer.pos.0,
-                    offset_y + computer.pos.1,
-                    computer.width * height_unit,
-                    computer.length * height_unit,
-                    BLACK,
-                );
-
-                draw_rectangle(
-                    ball.pos.0,
-                    ball.pos.1,
-                    ball.size as f32 * height_unit,
-                    ball.size as f32 * height_unit,
-                    BLACK,
-                )
-            }
-            RunState::GameOver => {
-                clear_background(WHITE);
-                let text = if comp_score == 10 {
-                    "You are a loser. Press [enter] to try again."
-                } else {
-                    "You win. Congratulations."
-                };
-                let text_size = measure_text(text, None, font_size as _, 1.0);
-
-                draw_text(
-                    text,
-                    width / 2. - text_size.width / 2.,
-                    height / 2. - text_size.height / 2.,
-                    font_size,
-                    BLACK,
-                );
-                if is_key_down(KeyCode::Enter) {
-                    player_score = 0;
-                    comp_score = 0;
-                    run_state = RunState::Running;
-                    last_update = get_time();
-                }
-            }
-        }
+        handle_input(&mut gs);
+        update(&mut gs);
+        draw(&gs);
 
         next_frame().await
     }
